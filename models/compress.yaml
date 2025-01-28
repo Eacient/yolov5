@@ -1,0 +1,45 @@
+in_c: 3
+embed: 32
+ds: 0
+neck_shortcut: False
+model: {
+  b0: [[-1, 1, Conv, [in_c, 32, 3]]],
+  b1: [
+    [-1, 1, Conv, [32, 64, 3, 2]],
+    [-1, 1, CSP, [64, False, 0.5]],
+  ],
+  b2: [
+    [-1, 1, Conv, [64, 4*embed, 3, 2]],
+    [-1, 2, CSP, [4*embed, True, 1]],
+  ],
+  b3: [
+    [-1, 1, Conv, [4*embed, 8*embed, 3, 2]],
+    [-1, 8, CSP, [8*embed, True, 1]],
+  ],
+  b4: [
+    [-1, 1, Conv, [8*embed, 16*embed, 3, 2]],
+    [-1, 8, CSP, [16*embed, True, 1]],
+  ],
+  b5: [
+    [-1, 1, Conv, [16*embed, 32*embed, 3, 2]],
+    [-1, 4, CSP, [32*embed, True, 1, "mish", "stopbackward=800"]],
+  ],
+  spp: [
+    [-1, 1, convMLP, [32*embed, 16*embed, 2, "leaky", neck_shortcut]],
+    [-1, 1, SPP, []]
+  ],
+  fpn5: [
+    [-1, 1, convMLP, [64*embed, 16*embed, 2, "leaky", neck_shortcut]],
+  ],
+  fpn4: [
+    [[-1, "b4"], 2, UpSampleFuse, [16*embed, 16*embed, 8*embed, 2, 2, "leaky", neck_shortcut]],
+  ],
+  fpn3: [
+    [[-1, "b3"], 2, UpSampleFuse, [8*embed, 8*embed, 4*embed, 2, 2, "leaky", neck_shortcut]],
+  ],
+  yolo3: [
+    [-1, 1, Conv, [4*embed, 256, 3, 1, "leaky"]],
+    [-1, 1, Conv, [256, 18, 1, 1, "linear", False]],
+    [-1, 1, yolo, [[0,1,2], 1.2, True]]
+  ]
+}

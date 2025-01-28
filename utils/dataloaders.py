@@ -174,7 +174,7 @@ def create_dataloader(
     quad=False,
     prefix="",
     shuffle=False,
-    seed=0,
+    seed=0
 ):
     """Creates and returns a configured DataLoader instance for loading and processing image datasets."""
     if rect and shuffle:
@@ -194,7 +194,7 @@ def create_dataloader(
             pad=pad,
             image_weights=image_weights,
             prefix=prefix,
-            rank=rank,
+            rank=rank
         )
 
     batch_size = min(batch_size, len(dataset))
@@ -535,6 +535,92 @@ def img2label_paths(img_paths):
     return [sb.join(x.rsplit(sa, 1)).rsplit(".", 1)[0] + ".txt" for x in img_paths]
 
 
+def augment_hsvb(img, label, h_range=0.1, s_range=1.5, v_range=1.5, blur =1):
+    """
+    对输入图像进行HSV颜色空间和亮度的随机扰动。
+
+    参数:
+        img (numpy.ndarray): 输入图像（BGR格式）
+        h_range (float): 色调调整范围，默认为0.1
+        s_range (float): 饱和度调整范围，默认为1.5
+        v_range (float): 亮度/曝光调整范围，默认为1.5
+
+    返回:
+        numpy.ndarray: 经过增强处理后的图像
+    """
+
+    # 创建图像的副本以避免修改原始图像
+    img = img.copy()
+
+    # 将图像从BGR颜色空间转换到HSV颜色空间
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv_img)
+
+    # 随机生成调整值
+    dh = np.random.uniform(-h_range, h_range) * 180  # 调整色调
+    ds = rand_scale(s_range)                         # 调整饱和度
+    dv = rand_scale(v_range)                         # 调整亮度/曝光
+
+    # 应用调整
+    h = (h.astype(np.float32) + dh) % 180
+    s = np.clip(s.astype(np.float32) * ds, 0, 255)
+    v = np.clip(v.astype(np.float32) * dv, 0, 255)
+
+    # 合并通道并转换回BGR颜色空间
+    distorted_hsv = cv2.merge([h.astype(np.uint8), s.astype(np.uint8), v.astype(np.uint8)])
+    distorted_bgr = cv2.cvtColor(distorted_hsv, cv2.COLOR_HSV2BGR)
+
+    return distorted_bgr
+    img = blur_image(distorted_bgr, label)
+    return img
+
+
+def rand_scale(s):
+    """随机缩放比例因子"""
+    scale = np.random.uniform(1, s) if np.random.rand() <= 0.5 else 1.0 / np.random.uniform(1, s)
+    return scale
+
+def blur_image(img, labels):
+    """
+    对图像应用高斯模糊，但保持指定的目标区域清晰。
+    
+    参数:
+        img (numpy.ndarray): 输入图像。
+        labels (list of list): 每个子列表包含 [cls, x, y, w, h]，
+                               其中x, y, w, h是归一化后的边界框参数。
+    
+    返回:
+        numpy.ndarray: 处理后的图像。
+    """
+    # 对整个图像应用高斯模糊
+    blurred_img = cv2.GaussianBlur(img, (17, 17), 0)
+    
+    # 创建一个与原始图像相同大小的掩码，用于保存需要保持清晰的区域
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    
+    for label in labels:
+        _, x, y, w, h = label  # 忽略类别信息
+        
+        # 计算边界框的左上角和右下角坐标，并反归一化
+        left = int((x - w / 2) * img.shape[1])
+        top = int((y - h / 2) * img.shape[0])
+        right = int((x + w / 2) * img.shape[1])
+        bottom = int((y + h / 2) * img.shape[0])
+        
+        # 确保边界框在图像范围内
+        left = max(0, min(left, img.shape[1]))
+        top = max(0, min(top, img.shape[0]))
+        right = max(0, min(right, img.shape[1]))
+        bottom = max(0, min(bottom, img.shape[0]))
+        
+        # 在掩码中标记边界框区域为白色
+        cv2.rectangle(mask, (left, top), (right, bottom), 255, -1)
+    
+    # 将原始图像中的目标区域复制到模糊图像中
+    blurred_img[mask > 0] = img[mask > 0]
+    
+    return blurred_img
+
 class LoadImagesAndLabels(Dataset):
     """Loads images and their corresponding labels for training and validation in YOLOv5."""
 
@@ -570,6 +656,7 @@ class LoadImagesAndLabels(Dataset):
         self.stride = stride
         self.path = path
         self.albumentations = Albumentations(size=img_size) if augment else None
+        self.hsvb = hyp['hsvb'] if 'hsvb' in hyp.keys() else None
 
         try:
             f = []  # image files
@@ -813,12 +900,18 @@ class LoadImagesAndLabels(Dataset):
             labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3)
 
         if self.augment:
-            # Albumentations
-            img, labels = self.albumentations(img, labels)
-            nl = len(labels)  # update after albumentations
+            # # Albumentations
+            # img, labels = self.albumentations(img, labels)
+            # nl = len(labels)  # update after albumentations
 
-            # HSV color-space
-            augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
+            if self.hsvb:
+                img = augment_hsvb(img, labels, *self.hsvb)
+            else:
+                # HSV color-space
+                augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
+
+            if random.random() < hyp["blur"]:
+                img = blur_image(img, labels)
 
             # Flip up-down
             if random.random() < hyp["flipud"]:

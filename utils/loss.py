@@ -200,8 +200,8 @@ class ComputeLoss:
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tbox, indices, anch = [], [], [], []
         gain = torch.ones(7, device=self.device)  # normalized to gridspace gain
-        ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
-        targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
+        ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt) [na, nt][0,0,0,0][1,1,1,1]
+        targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices #[na, nt, 2]
 
         g = 0.5  # bias
         off = (
@@ -221,7 +221,7 @@ class ComputeLoss:
 
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape
-            gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
+            gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain 1, 1, 13, 13, 13, 13, 1
 
             # Match targets to anchors
             t = targets * gain  # shape(3,n,7)
